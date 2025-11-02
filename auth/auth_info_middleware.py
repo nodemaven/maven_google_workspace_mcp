@@ -198,8 +198,6 @@ class AuthInfoMiddleware(Middleware):
                         if not token_response:
                             logger.error("Failed to exchange refresh token provided in X-Refresh-Token")
                             return
-                        
-                        logger.info(f"{token_response=}")
 
                         # We need a user email to bind credentials; try header, else leave unbound
                         user_email = provided_email
@@ -213,7 +211,6 @@ class AuthInfoMiddleware(Middleware):
                             session_id=(mcp_session_id or "unknown"),
                             expires_at=int(time.time()) + int(token_response.get("expires_in", 3600)),
                         )
-                        logger.info("HERE????")
 
                         if user_email:
                             # Store in central session store and bind to MCP session
@@ -233,7 +230,6 @@ class AuthInfoMiddleware(Middleware):
                             context.fastmcp_context.set_state("token_type", "google_oauth")
                             context.fastmcp_context.set_state("authenticated_via", "refresh_token")
                             logger.info("Authenticated via external refresh_token (no user email provided)")
-                        logger.info("MB HERE????")
                     except Exception as e:
                         logger.error(f"Error handling refresh token header: {e}")
                         return
