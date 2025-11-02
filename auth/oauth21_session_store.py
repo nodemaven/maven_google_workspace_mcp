@@ -12,6 +12,7 @@ from typing import Dict, Optional, Any, Tuple
 from threading import RLock
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass
+import requests
 
 from fastmcp.server.auth import AccessToken
 from google.oauth2.credentials import Credentials
@@ -629,6 +630,41 @@ def _resolve_client_credentials() -> Tuple[Optional[str], Optional[str]]:
     return client_id, client_secret
 
 
+def exchange_refresh_token_for_access_token(refresh_token: str) -> Optional[dict]:
+    """
+    Exchange a Google OAuth refresh token for a fresh access token using client credentials.
+
+    Returns token response dict on success, or None on failure.
+    """
+    try:
+        client_id, client_secret = _resolve_client_credentials()
+        if not client_id or not client_secret:
+            logger.error("Cannot exchange refresh token: missing client_id/client_secret")
+            return None
+
+        resp = requests.post(
+            "https://oauth2.googleapis.com/token",
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "refresh_token": refresh_token,
+                "grant_type": "refresh_token",
+            },
+            timeout=20,
+        )
+        if resp.status_code != 200:
+            logger.error("Refresh token exchange failed: %s %s", resp.status_code, resp.text)
+            return None
+        data = resp.json()
+        # Ensure refresh_token present in stored session (Google may omit it in response)
+        if "refresh_token" not in data or not data.get("refresh_token"):
+            data["refresh_token"] = refresh_token
+        return data
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error(f"Exception exchanging refresh token: {exc}")
+        return None
+
+
 def _build_credentials_from_provider(access_token: AccessToken) -> Optional[Credentials]:
     """Construct Google credentials from the provider cache."""
     if not _auth_provider:
@@ -793,9 +829,6 @@ def store_token_session(token_response: dict, user_email: str, mcp_session_id: O
     Returns:
         Session ID
     """
-    if not _auth_provider:
-        logger.error("Auth provider not configured")
-        return ""
 
     try:
         # Try to get FastMCP session ID from context if not provided
