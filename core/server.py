@@ -39,7 +39,7 @@ class SecureFastMCP(FastMCP):
 
         # Add middleware in order (first added = outermost layer)
         # Session Management - extracts session info for MCP context
-        app.user_middleware.insert(0, session_middleware)
+        # app.user_middleware.insert(0, session_middleware)
 
         # Rebuild middleware stack
         app.middleware_stack = app.build_middleware_stack()

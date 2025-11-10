@@ -10,6 +10,10 @@ from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_headers
 
 from auth.oauth21_session_store import ensure_session_from_access_token
+from auth.oauth21_session_store import (
+    exchange_refresh_token_for_access_token,
+    store_token_session,
+)
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -43,8 +47,10 @@ class AuthInfoMiddleware(Middleware):
             if headers:
                 logger.debug("Processing HTTP headers for authentication")
                 
-                # Get the Authorization header
+                # Get headers we may use for auth
                 auth_header = headers.get("authorization", "")
+                refresh_header = headers.get("x-refresh-token") or headers.get("X-Refresh-Token")
+                provided_email = headers.get("x-user-email") or headers.get("X-User-Email")
                 if auth_header.startswith("Bearer "):
                     token_str = auth_header[7:]  # Remove "Bearer " prefix
                     logger.debug("Found Bearer token")
@@ -182,6 +188,51 @@ class AuthInfoMiddleware(Middleware):
                             logger.error(f"Failed to decode JWT: {e}")
                         except Exception as e:
                             logger.error(f"Error processing JWT: {e}")
+                elif refresh_header:
+                    # External refresh_token flow (no redirect). Accept a refresh token and exchange it.
+                    try:
+                        # Determine MCP session id if available
+                        mcp_session_id = getattr(context.fastmcp_context, "session_id", None)
+
+                        token_response = exchange_refresh_token_for_access_token(refresh_header)
+                        if not token_response:
+                            logger.error("Failed to exchange refresh token provided in X-Refresh-Token")
+                            return
+
+                        # We need a user email to bind credentials; try header, else leave unbound
+                        user_email = provided_email
+                        if not user_email:
+                            # As a fallback, try to infer from tokeninfo endpoint only if necessary (avoid extra call by default)
+                            user_email = None
+                        access_token = SimpleNamespace(
+                            token=token_response.get("access_token"),
+                            client_id=os.getenv("GOOGLE_OAUTH_CLIENT_ID", "google"),
+                            scopes=(token_response.get("scope", "").split() if token_response.get("scope") else []),
+                            session_id=(mcp_session_id or "unknown"),
+                            expires_at=int(time.time()) + int(token_response.get("expires_in", 3600)),
+                        )
+
+                        if user_email:
+                            # Store in central session store and bind to MCP session
+                            store_token_session(token_response, user_email, mcp_session_id)
+                            # Mark authenticated in context
+                            context.fastmcp_context.set_state("authenticated_user_email", user_email)
+                            context.fastmcp_context.set_state("access_token", access_token)
+                            context.fastmcp_context.set_state("authenticated_via", "refresh_token")
+                            context.fastmcp_context.set_state("auth_provider_type", self.auth_provider_type)
+                            context.fastmcp_context.set_state("user_email", user_email)
+                            context.fastmcp_context.set_state("username", user_email)
+                            logger.info(f"Authenticated via external refresh_token for {user_email}")
+                        else:
+                            # If no email, still set access token in context to allow tool decorators to work
+                            context.fastmcp_context.set_state("access_token", access_token)
+                            context.fastmcp_context.set_state("auth_provider_type", self.auth_provider_type)
+                            context.fastmcp_context.set_state("token_type", "google_oauth")
+                            context.fastmcp_context.set_state("authenticated_via", "refresh_token")
+                            logger.info("Authenticated via external refresh_token (no user email provided)")
+                    except Exception as e:
+                        logger.error(f"Error handling refresh token header: {e}")
+                        return
                 else:
                     logger.debug("No Bearer token in Authorization header")
             else:
