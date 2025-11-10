@@ -85,7 +85,7 @@ def main():
     args = parser.parse_args()
 
     # Set port and base URI once for reuse throughout the function
-    port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", 8001)))
+    port = int(os.getenv("PORT", os.getenv("WORKSPACE_MCP_PORT", 8002)))
     base_uri = os.getenv("WORKSPACE_MCP_BASE_URI", "http://localhost")
     external_url = os.getenv("WORKSPACE_EXTERNAL_URL")
     display_url = external_url if external_url else f"{base_uri}:{port}"
