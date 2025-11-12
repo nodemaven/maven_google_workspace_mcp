@@ -5,11 +5,15 @@ import jwt
 import logging
 import os
 import time
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from fastmcp.server.middleware import Middleware, MiddlewareContext
 from fastmcp.server.dependencies import get_http_headers
 
 from auth.oauth21_session_store import ensure_session_from_access_token
+from auth.oauth_config import get_oauth_config
+from google.oauth2.credentials import Credentials as GoogleCredentials
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -31,16 +35,123 @@ class AuthInfoMiddleware(Middleware):
             logger.warning("No fastmcp_context available")
             return
 
-        # Return early if authentication state is already set
-        if context.fastmcp_context.get_state("authenticated_user_email"):
-            logger.info("Authentication state already set.")
-            return
-
         # Try to get the HTTP request to extract Authorization header
         try:
             # Use the new FastMCP method to get HTTP headers
             headers = get_http_headers()
             if headers:
+                # 1) Priority: explicit Google refresh token + user email headers
+                try:
+                    # Accept both Google-specific and generic aliases
+                    refresh_token = (
+                        headers.get("x-google-refresh-token")
+                        or headers.get("X-Google-Refresh-Token")
+                        or headers.get("x-refresh-token")
+                        or headers.get("X-Refresh-Token")
+                    )
+                    header_user_email = (
+                        headers.get("x-google-user-email")
+                        or headers.get("X-Google-User-Email")
+                        or headers.get("x-user-email")
+                        or headers.get("X-User-Email")
+                    )
+                    raw_scopes = (
+                        headers.get("x-google-scopes")
+                        or headers.get("X-Google-Scopes")
+                        or headers.get("x-scopes")
+                        or headers.get("X-Scopes")
+                    )
+                    if refresh_token and header_user_email:
+                        logger.info("Detected refresh token headers; attempting token refresh")
+                        cfg = get_oauth_config()
+                        creds = GoogleCredentials(
+                            token=None,
+                            refresh_token=refresh_token,
+                            token_uri="https://oauth2.googleapis.com/token",
+                            client_id=cfg.client_id,
+                            client_secret=cfg.client_secret,
+                            scopes=None,
+                        )
+                        creds.refresh(GoogleAuthRequest())
+
+                        # Compute expires_in if possible
+                        expires_in = 3600
+                        if creds.expiry:
+                            now = datetime.now(timezone.utc)
+                            try:
+                                expires_in = max(0, int((creds.expiry - now).total_seconds()))
+                            except Exception:
+                                expires_in = 3600
+
+                        # Resolve scopes: header > tokeninfo > empty
+                        scopes_list = None
+                        try:
+                            if raw_scopes:
+                                parts = [s.strip() for s in raw_scopes.replace(",", " ").split() if s.strip()]
+                                scopes_list = parts if parts else None
+                            if scopes_list is None and creds.token:
+                                import requests
+                                resp = requests.get(
+                                    "https://www.googleapis.com/oauth2/v1/tokeninfo",
+                                    params={"access_token": creds.token},
+                                    timeout=5,
+                                )
+                                if resp.ok:
+                                    data = resp.json()
+                                    scope_str = data.get("scope") or ""
+                                    parts = [s.strip() for s in scope_str.split() if s.strip()]
+                                    scopes_list = parts if parts else None
+                        except Exception:
+                            pass
+
+                        # Store session directly (works in oauth2.0 mode too)
+                        try:
+                            from auth.oauth21_session_store import get_oauth21_session_store
+                            store = get_oauth21_session_store()
+                            mcp_session_id = getattr(context.fastmcp_context, "session_id", None)
+                            store.store_session(
+                                user_email=header_user_email,
+                                access_token=creds.token,
+                                refresh_token=refresh_token,
+                                token_uri="https://oauth2.googleapis.com/token",
+                                client_id=cfg.client_id,
+                                client_secret=cfg.client_secret,
+                                scopes=scopes_list or [],
+                                expiry=creds.expiry,
+                                mcp_session_id=mcp_session_id,
+                                issuer="https://accounts.google.com",
+                            )
+                            logger.info(f"Stored credentials from refresh header for {header_user_email} (scopes={len(scopes_list or [])})")
+                        except Exception as e:
+                            logger.error(f"Failed to store session from refresh token headers: {e}")
+
+                        # Populate FastMCP context state
+                        context.fastmcp_context.set_state("authenticated_user_email", header_user_email)
+                        context.fastmcp_context.set_state("authenticated_via", "refresh_token_header")
+                        context.fastmcp_context.set_state("user_email", header_user_email)
+                        context.fastmcp_context.set_state("username", header_user_email)
+                        access_token = SimpleNamespace(
+                            token=creds.token,
+                            client_id=cfg.client_id or "google",
+                            scopes=scopes_list or [],
+                            session_id=f"google_oauth_{(creds.token[:8] if creds.token else 'unknown')}",
+                            expires_at=int(time.time()) + expires_in,
+                            email=header_user_email,
+                        )
+                        context.fastmcp_context.set_state("access_token", access_token)
+                        context.fastmcp_context.set_state("token_type", "google_oauth")
+                        context.fastmcp_context.set_state("auth_provider_type", self.auth_provider_type)
+                        logger.info(f"Authenticated via refresh token header for {header_user_email}")
+                        return
+                except Exception as e:
+                    logger.error(f"Failed refresh-token header auth: {e}")
+                    # proceed to other methods
+
+                # 2) If already authenticated by earlier middleware, respect it
+                if context.fastmcp_context.get_state("authenticated_user_email"):
+                    logger.info("Authentication state already set.")
+                    return
+
                 logger.debug("Processing HTTP headers for authentication")
                 
                 # Get the Authorization header
