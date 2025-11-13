@@ -42,4 +42,4 @@ ENV TOOLS=""
 
 # Use entrypoint for the base command and CMD for args
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http --tools docs drive sheets "]
+CMD ["uv run main.py --transport streamable-http --tools docs drive sheets gmail"]
