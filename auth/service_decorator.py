@@ -543,6 +543,7 @@ def require_google_service(
             authenticated_user, auth_method, mcp_session_id = _get_auth_context(
                 func.__name__
             )
+            logger.info(f"Authenticated user: {authenticated_user=}. MCP session ID: {mcp_session_id=}")
 
             # Extract user_google_email based on OAuth mode
             if is_oauth21_enabled():
@@ -550,6 +551,7 @@ def require_google_service(
             else:
                 user_google_email = _extract_oauth20_user_email(args, kwargs, wrapper_sig)
 
+            logger.info(f"Extracted user email: {user_google_email=}")
             # Get service configuration from the decorator's arguments
             if service_type not in SERVICE_CONFIGS:
                 raise Exception(f"Unknown service type: {service_type}")
@@ -558,8 +560,12 @@ def require_google_service(
             service_name = config["service"]
             service_version = version or config["version"]
 
+            logger.info(f"Service name: {service_name=}. Service version: {service_version=}")
             # Resolve scopes
+
             resolved_scopes = _resolve_scopes(scopes)
+
+            logger.info(f"Resolved scopes: {resolved_scopes=}")
 
             try:
                 tool_name = func.__name__
@@ -589,16 +595,18 @@ def require_google_service(
                     )
 
                 # Authenticate service
-                service, actual_user_email = await _authenticate_service(
-                    use_oauth21,
-                    service_name,
-                    service_version,
-                    tool_name,
-                    user_google_email,
-                    resolved_scopes,
-                    mcp_session_id,
-                    authenticated_user,
-                )
+                credentials = get_context().get_state("credentials")
+                service = build(service_name, service_version, credentials=credentials)
+                # service, actual_user_email = await _authenticate_service(
+                #     use_oauth21,
+                #     service_name,
+                #     service_version,
+                #     tool_name,
+                #     user_google_email,
+                #     resolved_scopes,
+                #     mcp_session_id,
+                #     authenticated_user,
+                # )
             except GoogleAuthenticationError as e:
                 logger.error(
                     f"[{tool_name}] GoogleAuthenticationError during authentication. "
@@ -617,7 +625,7 @@ def require_google_service(
                 return await func(service, *args, **kwargs)
             except RefreshError as e:
                 error_message = _handle_token_refresh_error(
-                    e, actual_user_email, service_name
+                    e, user_google_email, service_name
                 )
                 raise Exception(error_message)
 
