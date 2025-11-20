@@ -3,6 +3,7 @@ Google Drive MCP Tools
 
 This module provides MCP tools for interacting with Google Drive API.
 """
+import base64
 import logging
 import asyncio
 from typing import Optional
@@ -17,6 +18,7 @@ from auth.oauth_config import is_stateless_mode
 from core.utils import extract_office_xml_text, handle_http_errors
 from core.server import server
 from gdrive.drive_helpers import DRIVE_QUERY_PATTERNS, build_drive_list_params
+from gdrive.pdf_parser import pdf_parser_tool, VLLMNotInitialized
 
 logger = logging.getLogger(__name__)
 
@@ -90,25 +92,109 @@ async def search_drive_files(
     text_output = "\n".join(formatted_files_text_parts)
     return text_output
 
+# @server.tool()
+# @handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
+# @require_google_service("drive", "drive_read")
+# async def get_drive_file_content(
+#     service,
+#     user_google_email: str,
+#     file_id: str,
+# ) -> str:
+#     """
+#     Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
+
+#     • Native Google Docs, Sheets, Slides → exported as text / CSV.
+#     • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
+#       extract readable text.
+#     • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+
+#     Args:
+#         user_google_email: The user’s Google email address.
+#         file_id: Drive file ID.
+
+#     Returns:
+#         str: The file content as plain text with metadata header.
+#     """
+#     logger.info(f"[get_drive_file_content] Invoked. File ID: '{file_id}'")
+
+#     file_metadata = await asyncio.to_thread(
+#         service.files().get(
+#             fileId=file_id, fields="id, name, mimeType, webViewLink", supportsAllDrives=True
+#         ).execute
+#     )
+#     mime_type = file_metadata.get("mimeType", "")
+#     file_name = file_metadata.get("name", "Unknown File")
+#     export_mime_type = {
+#         "application/vnd.google-apps.document": "text/plain",
+#         "application/vnd.google-apps.spreadsheet": "text/csv",
+#         "application/vnd.google-apps.presentation": "text/plain",
+#     }.get(mime_type)
+
+#     request_obj = (
+#         service.files().export_media(fileId=file_id, mimeType=export_mime_type)
+#         if export_mime_type
+#         else service.files().get_media(fileId=file_id)
+#     )
+#     fh = io.BytesIO()
+#     downloader = MediaIoBaseDownload(fh, request_obj)
+#     loop = asyncio.get_event_loop()
+#     done = False
+#     while not done:
+#         status, done = await loop.run_in_executor(None, downloader.next_chunk)
+
+#     file_content_bytes = fh.getvalue()
+
+#     # Attempt Office XML extraction only for actual Office XML files
+#     office_mime_types = {
+#         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+#         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+#         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+#     }
+
+#     if mime_type in office_mime_types:
+#         office_text = extract_office_xml_text(file_content_bytes, mime_type)
+#         if office_text:
+#             body_text = office_text
+#         else:
+#             # Fallback: try UTF-8; otherwise flag binary
+#             try:
+#                 body_text = file_content_bytes.decode("utf-8")
+#             except UnicodeDecodeError:
+#                 body_text = (
+#                     f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+#                     f"{len(file_content_bytes)} bytes]"
+#                 )
+#     else:
+#         # For non-Office files (including Google native files), try UTF-8 decode directly
+#         try:
+#             body_text = file_content_bytes.decode("utf-8")
+#         except UnicodeDecodeError:
+#             body_text = (
+#                 f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
+#                 f"{len(file_content_bytes)} bytes]"
+#             )
+
+#     # Assemble response
+#     header = (
+#         f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
+#         f'Link: {file_metadata.get("webViewLink", "#")}\n\n--- CONTENT ---\n'
+#     )
+#     return header + body_text
+
+# ===============================
+# ===============================
+# OVERRIDE
+# ===============================
+# ===============================
 @server.tool()
 @handle_http_errors("get_drive_file_content", is_read_only=True, service_type="drive")
 @require_google_service("drive", "drive_read")
-async def get_drive_file_content(
-    service,
-    user_google_email: str,
-    file_id: str,
-) -> str:
+async def drive_read_file_content(service, user_google_email: str, file_id: str) -> str:
     """
-    Retrieves the content of a specific Google Drive file by ID, supporting files in shared drives.
-
-    • Native Google Docs, Sheets, Slides → exported as text / CSV.
-    • Office files (.docx, .xlsx, .pptx) → unzipped & parsed with std-lib to
-      extract readable text.
-    • Any other file → downloaded; tries UTF-8 decode, else notes binary.
+    Read the content of a file from Google Drive.
 
     Args:
-        user_google_email: The user’s Google email address.
-        file_id: Drive file ID.
+        file_id: The ID of the file to read.
 
     Returns:
         str: The file content as plain text with metadata header.
@@ -121,6 +207,7 @@ async def get_drive_file_content(
         ).execute
     )
     mime_type = file_metadata.get("mimeType", "")
+    logger.info(f"[get_drive_file_content] Mime type: '{mime_type}'")
     file_name = file_metadata.get("name", "Unknown File")
     export_mime_type = {
         "application/vnd.google-apps.document": "text/plain",
@@ -149,6 +236,7 @@ async def get_drive_file_content(
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     }
 
+    logger.info(f"{type(file_content_bytes)=}")
     if mime_type in office_mime_types:
         office_text = extract_office_xml_text(file_content_bytes, mime_type)
         if office_text:
@@ -162,6 +250,15 @@ async def get_drive_file_content(
                     f"[Binary or unsupported text encoding for mimeType '{mime_type}' - "
                     f"{len(file_content_bytes)} bytes]"
                 )
+    elif mime_type == "application/pdf":
+        try:
+            b64_str = base64.b64encode(file_content_bytes).decode("utf-8")
+            body_text = pdf_parser_tool.process(b64_str)
+        except VLLMNotInitialized as e:
+            logger.error(str(e))
+            body_text = "The tool could't read the content of this file"
+        logger.info(f"Extracted PDF content:\n{body_text}")
+
     else:
         # For non-Office files (including Google native files), try UTF-8 decode directly
         try:
@@ -172,7 +269,7 @@ async def get_drive_file_content(
                 f"{len(file_content_bytes)} bytes]"
             )
 
-    # Assemble response
+
     header = (
         f'File: "{file_name}" (ID: {file_id}, Type: {mime_type})\n'
         f'Link: {file_metadata.get("webViewLink", "#")}\n\n--- CONTENT ---\n'
@@ -563,3 +660,69 @@ async def check_drive_file_public_access(
         ])
     
     return "\n".join(output_parts)
+
+
+@server.tool()
+@handle_http_errors("drive_update_file_content", service_type="drive")
+@require_google_service("drive", "drive_file")
+async def drive_update_file_content(
+    service, user_google_email: str, file_id: str, updated_content: str
+) -> str:
+    """
+    Updates the content of an existing file in Google Drive.
+
+    Args:
+        file_id: The ID of the file to update in Google Drive.
+        updated_content: The new content for the file (text or base64 encoded).
+
+    Returns:
+        str: A message containing the file_id, name, web_view_link, and size.
+    """
+    logger.info(f"Executing drive_update_file_content tool for file_id: '{file_id}'")
+
+    if not file_id or not file_id.strip():
+        raise ValueError("File ID cannot be empty")
+
+    if updated_content is None:
+        raise ValueError("Updated content cannot be None")
+
+    try:
+        file_metadata = (
+            service.files()
+            .get(fileId=file_id, fields="mimeType, name", supportsAllDrives=True)
+            .execute()
+        )
+        mime_type = file_metadata.get("mimeType")
+    except Exception as e:
+        raise ValueError(f"Error getting file metadata: {e}")
+
+    try:
+        media = MediaIoBaseUpload(
+            io.BytesIO(updated_content.encode("utf-8")),
+            mimetype=mime_type or "text/plain",
+            resumable=True,
+        )
+
+        result = (
+            service.files()
+            .update(
+                fileId=file_id,
+                media_body=media,
+                supportsAllDrives=True,
+                fields="id,name,webViewLink,size",
+            )
+            .execute()
+        )
+
+        logger.info(f"File updated successfully: {result}")
+
+        return (
+            f"Successfully updated file content for file_id: '{file_id}', " 
+            f"filename: '{result.get('name', '')}', "
+            f"web_view_link: '{result.get('webViewLink', '')}', "
+            f"size: '{result.get('size', '')}'"
+        )
+
+    except Exception as e:
+        logger.error(f"Error updating file content: {e}")
+        raise ValueError(f"Error updating file content: {e}")
