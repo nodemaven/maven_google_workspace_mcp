@@ -42,7 +42,7 @@ class PDFParser:
         self.groq_api_url = os.getenv("GROQ_API_URL", "https://api.groq.com/openai/v1")
         self.groq_api_key = os.getenv("GROQ_API_KEY")
         self.groq_models = os.getenv("GROQ_VLLM_MODELS", groq_free_vllm_models)
-        logger.info(f"{self.groq_models=}, {self.groq_api_key=}")
+        logger.info(f"{self.groq_models=}, groq_api_key_configured={bool(self.groq_api_key)}")
         if isinstance(self.groq_models, str):
             try:
                 self.groq_models = self.groq_models.split(",")
