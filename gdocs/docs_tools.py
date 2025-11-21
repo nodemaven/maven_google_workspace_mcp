@@ -282,7 +282,7 @@ async def list_docs_in_folder(
 async def create_doc(
     service: Any,
     user_google_email: str,
-    title: str,
+    doc_title: str,
     content: str = '',
 ) -> str:
     """
@@ -291,16 +291,16 @@ async def create_doc(
     Returns:
         str: Confirmation message with document ID and link.
     """
-    logger.info(f"[create_doc] Invoked. Email: '{user_google_email}', Title='{title}'")
+    logger.info(f"[create_doc] Invoked. Email: '{user_google_email}', Title='{doc_title}'")
 
-    doc = await asyncio.to_thread(service.documents().create(body={'title': title}).execute)
+    doc = await asyncio.to_thread(service.documents().create(body={'title': doc_title}).execute)
     doc_id = doc.get('documentId')
     if content:
         requests = [{'insertText': {'location': {'index': 1}, 'text': content}}]
         await asyncio.to_thread(service.documents().batchUpdate(documentId=doc_id, body={'requests': requests}).execute)
     link = f"https://docs.google.com/document/d/{doc_id}/edit"
-    msg = f"Created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}"
-    logger.info(f"Successfully created Google Doc '{title}' (ID: {doc_id}) for {user_google_email}. Link: {link}")
+    msg = f"Created Google Doc '{doc_title}' (ID: {doc_id}) for {user_google_email}. Link: {link}"
+    logger.info(f"Successfully created Google Doc '{doc_title}' (ID: {doc_id}) for {user_google_email}. Link: {link}")
     return msg
 
 

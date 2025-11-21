@@ -262,7 +262,7 @@ async def modify_sheet_values(
 async def create_spreadsheet(
     service,
     user_google_email: str,
-    title: str,
+    spreadsheet_title: str,
     sheet_names: Optional[List[str]] = None,
 ) -> str:
     """
@@ -276,11 +276,11 @@ async def create_spreadsheet(
     Returns:
         str: Information about the newly created spreadsheet including ID and URL.
     """
-    logger.info(f"[create_spreadsheet] Invoked. Email: '{user_google_email}', Title: {title}")
+    logger.info(f"[create_spreadsheet] Invoked. Email: '{user_google_email}', Title: {spreadsheet_title}")
 
     spreadsheet_body = {
         "properties": {
-            "title": title
+            "title": spreadsheet_title
         }
     }
 
@@ -297,7 +297,7 @@ async def create_spreadsheet(
     spreadsheet_url = spreadsheet.get("spreadsheetUrl")
 
     text_output = (
-        f"Successfully created spreadsheet '{title}' for {user_google_email}. "
+        f"Successfully created spreadsheet '{spreadsheet_title}' for {user_google_email}. "
         f"ID: {spreadsheet_id} | URL: {spreadsheet_url}"
     )
 
