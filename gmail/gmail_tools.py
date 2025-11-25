@@ -669,9 +669,9 @@ async def send_gmail_message(
     return f"Email sent! Message ID: {message_id}"
 
 
-@server.tool()
-@handle_http_errors("draft_gmail_message", service_type="gmail")
-@require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
+# @server.tool()
+# @handle_http_errors("draft_gmail_message", service_type="gmail")
+# @require_google_service("gmail", GMAIL_COMPOSE_SCOPE)
 async def draft_gmail_message(
     service,
     user_google_email: str,
