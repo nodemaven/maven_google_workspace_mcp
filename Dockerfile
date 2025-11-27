@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir uv
 COPY . .
 
 # Install Python dependencies using uv sync
-RUN uv sync --frozen --no-dev
+RUN uv sync --no-dev
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app \
@@ -42,4 +42,4 @@ ENV TOOLS=""
 
 # Use entrypoint for the base command and CMD for args
 ENTRYPOINT ["/bin/sh", "-c"]
-CMD ["uv run main.py --transport streamable-http --tools docs drive sheets gmail"]
+CMD ["uv run main.py --transport streamable-http --tools docs drive sheets"]
